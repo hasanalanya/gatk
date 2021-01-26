@@ -11,6 +11,7 @@ import org.broadinstitute.barclay.help.DocumentedFeature;
 import org.broadinstitute.gatk.nativebindings.smithwaterman.SWOverhangStrategy;
 import org.broadinstitute.hellbender.engine.FeatureContext;
 import org.broadinstitute.hellbender.engine.ReferenceContext;
+import org.broadinstitute.hellbender.utils.MathUtils;
 import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.genotyper.AlleleLikelihoods;
 import org.broadinstitute.hellbender.utils.haplotype.EventMap;
@@ -92,13 +93,24 @@ public class AssemblyComplexity extends JumboInfoAnnotation {
 
         result.put(GATKVCFConstants.HAPLOTYPE_COMPLEXITY_KEY, editDistances);
 
+        // measure which proportion of reads supporting each alt allele fit the most-supported haplotype for that allele
+        final double[] haplotypeDominance = vc.getAlternateAlleles().stream().mapToDouble(allele -> {
+            final int[] counts = haplotypesByDescendingSupport.stream()
+                    .filter(hap -> containsAllele(hap.getEventMap(), allele, vc.getStart()))
+                    .mapToInt(hap -> haplotypeSupportCounts.get(hap).intValue())
+                    .toArray();
+            return MathUtils.arrayMax(counts) / (double) MathUtils.sum(counts);
+        }).toArray();
+
+        result.put(GATKVCFConstants.HAPLOTYPE_DOMINANCE_KEY, haplotypeDominance);
+
         return result;
     }
 
 
     @Override
     public List<String> getKeyNames() {
-        return Arrays.asList(GATKVCFConstants.HAPLOTYPE_EQUIVALENCE_COUNTS_KEY, GATKVCFConstants.HAPLOTYPE_COMPLEXITY_KEY);
+        return Arrays.asList(GATKVCFConstants.HAPLOTYPE_EQUIVALENCE_COUNTS_KEY, GATKVCFConstants.HAPLOTYPE_COMPLEXITY_KEY, GATKVCFConstants.HAPLOTYPE_DOMINANCE_KEY);
     }
 
     // does an EventMap contain a variant allele from another EventMap.
