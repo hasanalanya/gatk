@@ -1,14 +1,10 @@
 package org.broadinstitute.hellbender.tools.walkers.annotator;
 
 
-import htsjdk.samtools.Cigar;
-import htsjdk.samtools.CigarElement;
-import htsjdk.samtools.CigarOperator;
 import htsjdk.variant.variantcontext.Allele;
 import htsjdk.variant.variantcontext.Genotype;
 import htsjdk.variant.variantcontext.GenotypeBuilder;
 import htsjdk.variant.variantcontext.VariantContext;
-import htsjdk.variant.vcf.VCFFormatHeaderLine;
 import org.apache.commons.lang.StringUtils;
 import org.broadinstitute.barclay.help.DocumentedFeature;
 import org.broadinstitute.gatk.nativebindings.smithwaterman.SWOverhangStrategy;
@@ -18,11 +14,13 @@ import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.genotyper.AlleleLikelihoods;
 import org.broadinstitute.hellbender.utils.haplotype.Haplotype;
 import org.broadinstitute.hellbender.utils.help.HelpConstants;
-import org.broadinstitute.hellbender.utils.read.*;
+import org.broadinstitute.hellbender.utils.read.AlignmentUtils;
+import org.broadinstitute.hellbender.utils.read.CigarUtils;
+import org.broadinstitute.hellbender.utils.read.Fragment;
+import org.broadinstitute.hellbender.utils.read.GATKRead;
 import org.broadinstitute.hellbender.utils.smithwaterman.SmithWatermanAligner;
 import org.broadinstitute.hellbender.utils.smithwaterman.SmithWatermanAlignment;
 import org.broadinstitute.hellbender.utils.variant.GATKVCFConstants;
-import org.broadinstitute.hellbender.utils.variant.GATKVCFHeaderLines;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -40,7 +38,7 @@ public class FeaturizedReadSets extends JumboGenotypeAnnotation {
 
     private static final int DEFAULT_MAX_REF_COUNT = Integer.MAX_VALUE;
 
-    private static final int FEATURES_PER_READ = 10;
+    private static final int FEATURES_PER_READ = 11;
 
     private final SmithWatermanAligner aligner = SmithWatermanAligner.getAligner(SmithWatermanAligner.Implementation.FASTEST_AVAILABLE);
 
@@ -140,6 +138,8 @@ public class FeaturizedReadSets extends JumboGenotypeAnnotation {
         final int mismatchCount = AlignmentUtils.getMismatchCount(copy, haplotype.getBases(), readToHaplotypeAlignment.getAlignmentOffset()).numMismatches;
         result.add(mismatchCount);
 
+        final long indelsVsBestHaplotype = readToHaplotypeAlignment.getCigar().getCigarElements().stream().filter(el -> el.getOperator().isIndel()).count();
+        result.add((int) indelsVsBestHaplotype);
         Utils.validate(result.size() == FEATURES_PER_READ, "Wrong number of features");
 
         return result;
