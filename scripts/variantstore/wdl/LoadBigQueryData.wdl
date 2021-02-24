@@ -7,6 +7,7 @@ workflow LoadBigQueryData {
     String storage_location
     String datatype
     Int max_table_id
+    File? service_account_json
 
     File schema
     String numbered = "true"
@@ -32,6 +33,7 @@ workflow LoadBigQueryData {
       load = load,
       uuid = uuid,
       done = done,
+      service_account_json = service_account_json,
       preemptible_tries = preemptible_tries,
       docker = docker,
       for_testing_only = for_testing_only
@@ -44,6 +46,7 @@ workflow LoadBigQueryData {
         project_id = project_id,
         schema = schema,
         load = load,
+        service_account_json = service_account_json,
         preemptible_tries = preemptible_tries,
         docker = docker
     }
@@ -64,12 +67,19 @@ task LoadTable {
     String project_id
     File schema
     String load
+    File? service_account_json
 
     Int? preemptible_tries
     String docker
   }
 
+    String has_service_account_file = if (defined(service_account_json)) then 'true' else 'false'
+
   command <<<
+  if [ ~{has_service_account_file} = 'true' ]; then
+      gcloud auth activate-service-account --key-file='~{service_account_json}'
+  fi
+
     TABLE=$(echo ~{table_dir_files_str} | cut -d, -f1)
     DIR=$(echo ~{table_dir_files_str} | cut -d, -f2)
     FILES=$(echo ~{table_dir_files_str} | cut -d, -f3)
@@ -112,6 +122,7 @@ task CreateTables {
       String partitioned
       String load
       String uuid
+      File? service_account_json
 
       #input from previous task needed to delay task from running until the other is complete
       Array[String] done
@@ -123,12 +134,18 @@ task CreateTables {
       String? for_testing_only
     }
 
+    String has_service_account_file = if (defined(service_account_json)) then 'true' else 'false'
+
   command <<<
     set -x
     set -e
     ~{for_testing_only}
 
     DIR="~{storage_location}/~{datatype}_tsvs/"
+
+    if [ ~{has_service_account_file} = 'true' ]; then
+      gcloud auth activate-service-account --key-file='~{service_account_json}'
+    fi
 
     for TABLE_ID in $(seq 1 ~{max_table_id}); do
       PARTITION_STRING=""

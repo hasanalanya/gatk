@@ -1,11 +1,12 @@
 version 1.0
 
-import "https://api.firecloud.org/ga4gh/v1/tools/synthetic-microarray-gen:LoadBigQueryData/versions/7/plain-WDL/descriptor" as LoadBigQueryData
+import "https://api.firecloud.org/ga4gh/v1/tools/methods-dev:LoadBigQueryData/versions/4/plain-WDL/descriptor" as LoadBigQueryData
 
 workflow ImportGenomes {
 
   input {
-    File input_vcfs_list
+    Array[File] input_vcfs
+    Array[File] input_vcf_indexes
     Array[File]? input_metrics
     File interval_list
     String output_directory
@@ -15,6 +16,7 @@ workflow ImportGenomes {
     File pet_schema
     File vet_schema
     File metadata_schema
+    File? service_account_json
     String? drop_state
     Boolean? drop_state_includes_greater_than = false
 
@@ -24,7 +26,7 @@ workflow ImportGenomes {
   }
 
   String docker_final = select_first([docker, "us.gcr.io/broad-gatk/gatk:4.1.7.0"])
-  Array[String] input_vcfs = read_lines(input_vcfs_list)
+
 
   call GetMaxTableId {
     input:
@@ -36,12 +38,23 @@ workflow ImportGenomes {
       File input_metric = select_first([input_metrics])[i]
     }
 
+    if (defined(service_account_json)) {
+      call LocalizeVCFWithIndex {
+        input:
+          vcf_path = input_vcfs[i],
+          index_path = input_vcf_indexes[i],
+          service_account_json = select_first([service_account_json]),
+          disk_size = 1000
+      }
+    }
+
     call CreateImportTsvs {
       input:
-        input_vcf = input_vcfs[i],
+        input_vcf = select_first([LocalizeVCFWithIndex.output_vcf_file, input_vcfs[i]]),
         interval_list = interval_list,
         input_metrics = input_metric,
         sample_map = sample_map,
+        service_account_json = service_account_json,
         drop_state = drop_state,
         drop_state_includes_greater_than = drop_state_includes_greater_than,
         output_directory = output_directory,
@@ -62,6 +75,7 @@ workflow ImportGenomes {
       partitioned = "false",
       max_table_id = GetMaxTableId.max_table_id,
       schema = metadata_schema,
+      service_account_json = service_account_json,
       preemptible_tries = preemptible_tries,
       docker = docker_final
   }
@@ -75,6 +89,7 @@ workflow ImportGenomes {
       datatype = "pet",
       max_table_id = GetMaxTableId.max_table_id,
       schema = pet_schema,
+      service_account_json = service_account_json,
       preemptible_tries = preemptible_tries,
       docker = docker_final
   }
@@ -88,6 +103,7 @@ workflow ImportGenomes {
       datatype = "vet",
       max_table_id = GetMaxTableId.max_table_id,
       schema = vet_schema,
+      service_account_json = service_account_json,
       preemptible_tries = preemptible_tries,
       docker = docker_final
     }
@@ -126,6 +142,7 @@ task CreateImportTsvs {
     File interval_list
     String output_directory
     File sample_map
+    File? service_account_json
     String? drop_state
     Boolean? drop_state_includes_greater_than = false
 
@@ -138,7 +155,9 @@ task CreateImportTsvs {
   }
 
   Int multiplier = if defined(drop_state) then 4 else 10
-  Int disk_size = ceil(size(input_vcf, "GB") * multiplier) + 20
+  #TODO if the files aren't localized can we do this?
+  Int disk_size = 1000 #ceil(size(input_vcf, "GB") * multiplier) + 20
+  String has_service_account_file = if (defined(service_account_json)) then 'true' else 'false'
 
   meta {
     description: "Creates a tsv file for imort into BigQuery"
@@ -169,6 +188,10 @@ task CreateImportTsvs {
         -SNM ~{sample_map} \
         --ref-version 38
         
+      if [ ~{has_service_account_file} = 'true' ]; then
+        gcloud auth activate-service-account --key-file='~{service_account_json}'
+      fi
+
       gsutil cp metadata_*.tsv ~{output_directory}/metadata_tsvs/
       gsutil cp pet_*.tsv ~{output_directory}/pet_tsvs/
       gsutil cp vet_*.tsv ~{output_directory}/vet_tsvs/
@@ -185,3 +208,32 @@ task CreateImportTsvs {
   }
 }
 
+task LocalizeVCFWithIndex {
+  input {
+    String vcf_path
+    String index_path
+    File service_account_json
+    Int disk_size
+  }
+
+  command {
+    set -euo pipefail
+
+    gcloud auth activate-service-account --key-file='~{service_account_json}'
+    gsutil cp '~{vcf_path}' .
+    gsutil cp '~{index_path}' .
+    
+  }
+
+  output {
+    File output_vcf_file = basename(vcf_path)
+    File output_vcf_index_file = basename(index_path)
+  }
+
+  runtime {
+    docker: "gcr.io/google.com/cloudsdktool/cloud-sdk:305.0.0"
+    memory: "3.75 GiB"
+    cpu: "1"
+    disks: "local-disk ~{disk_size} HDD"
+  }
+}
